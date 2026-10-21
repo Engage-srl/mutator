@@ -203,3 +203,34 @@ def test_a_deep_expression_is_walked(tmp_path):
     assert discover_raw(python, "python", "app.py")
     go = f"package p\nfunc place() int {{ return {expr} }}\n"
     assert discover_raw(go, "go", "app.go")
+
+
+def test_typescript_types_are_not_mutation_sites(tmp_path):
+    source = """type Flag = { on: true };
+interface Box { open: false }
+export function check(n: number): { ok: true } | { ok: false; used?: true } {
+  const seen: Promise<{ done: false }> | null = null;
+  return { ok: n > 0 };
+}
+"""
+    sites = _sites(tmp_path, "src/demo/check.ts", source)
+    described = {(site.line, site.original, site.mutant) for site in sites}
+    assert described == {(5, ">", ">="), (5, "0", "1")}
+
+
+def test_a_site_remembers_where_its_statement_starts(tmp_path):
+    source = """export function save(db: Db, now: number) {
+  db
+    .prepare("x")
+    .bind(now + 1)
+    .run();
+  return {
+    ok: true,
+  };
+}
+"""
+    sites = _sites(tmp_path, "src/demo/save.ts", source)
+    anchors = {(site.line, site.original, site.anchor_line) for site in sites}
+    assert (4, "+", 2) in anchors
+    assert (4, "1", 2) in anchors
+    assert (7, "true", 6) in anchors

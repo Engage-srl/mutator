@@ -55,7 +55,7 @@ def _covered(site: Site, lines: set[int] | None, ignore_coverage: bool) -> bool:
         return True
     if lines is None:
         return False
-    return site.line in lines
+    return site.line in lines or site.anchor_line in lines
 
 
 def _select(
@@ -343,7 +343,7 @@ def scan_file(
         found = [site for site in found if site.line in lines]
     covered = None
     if not ignore_coverage and covered_lines is not None:
-        covered = {site.mutation_id: site.line in covered_lines for site in found}
+        covered = _coverage_map(found, covered_lines, ignore_coverage)
     history = load_history(root, file_key)
     digests = form_digests(source, path, root)
     changed = set()

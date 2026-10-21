@@ -171,6 +171,7 @@ def sites_in_file(source: str, path: Path, root: Path, file_key: str) -> list[Si
                 mutation_id=mutation_id(
                     file_key, owner.namespace, form, raw.start, raw.end, raw.original, raw.mutant
                 ),
+                anchor_line=raw.anchor_line,
             )
         )
     return found

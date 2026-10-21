@@ -113,6 +113,29 @@ def test_uncovered_sites_are_not_executed(tmp_path):
     assert result.forms[0].sites == 4
 
 
+def test_a_site_inside_a_covered_multi_line_statement_is_run(tmp_path):
+    # LCOV marks only the line a statement starts on.
+    path = tmp_path / "src" / "demo.py"
+    path.parent.mkdir()
+    path.write_text("def add(a, b):\n    return (a\n            + b)\n", encoding="utf-8")
+    runner = FakeRunner()
+    result = mutate_file(
+        path,
+        tmp_path,
+        runner=runner,
+        covered_lines={2},
+        ignore_coverage=False,
+        mutate_all=True,
+        lines=None,
+        test_command="fake",
+        timeout_factor=10,
+        mutation_warning=50,
+        baselines={},
+    )
+    assert result.forms[0].uncovered == 0
+    assert result.forms[0].killed == 1
+
+
 def test_a_failed_baseline_does_not_rewrite_metrics(tmp_path):
     path = tmp_path / "src" / "demo.py"
     path.parent.mkdir()

@@ -93,8 +93,12 @@ _CLOJURE_HEAD = {
 
 
 class RawSite:
-    def __init__(self, line: int, start: int, end: int, original: str, mutant: str, category: str):
+    def __init__(
+        self, line: int, start: int, end: int, original: str, mutant: str, category: str, anchor_line: int = 0
+    ):
         self.line = line
+        # The line its statement starts on. LCOV marks only that line of a multi-line statement.
+        self.anchor_line = anchor_line or line
         self.start = start
         self.end = end
         self.original = original
@@ -165,8 +169,42 @@ def _add(found: list[RawSite], node, original: str, mutant: str, category: str) 
             original=original,
             mutant=mutant,
             category=category,
+            anchor_line=_statement_line(node),
         )
     )
+
+
+def _is_statement(node_type: str) -> bool:
+    return node_type.endswith("_statement") or node_type.endswith("_declaration")
+
+
+def _statement_line(node) -> int:
+    current = node.parent
+    while current is not None:
+        if _is_statement(current.type):
+            return current.start_point[0] + 1
+        current = current.parent
+    return node.start_point[0] + 1
+
+
+# A literal in a TypeScript type, such as `{ ok: true }` in a return type, never runs.
+_TYPE_NODES = {
+    "type_annotation",
+    "type_alias_declaration",
+    "interface_declaration",
+    "type_arguments",
+    "type_parameters",
+    "literal_type",
+}
+
+
+def _in_type(node) -> bool:
+    current = node.parent
+    while current is not None:
+        if current.type in _TYPE_NODES:
+            return True
+        current = current.parent
+    return False
 
 
 def _clojure_head(node, data: bytes) -> str | None:
@@ -299,6 +337,8 @@ def _visit_leaf(node, data: bytes, language: str, found: list[RawSite]) -> None:
 
 
 def _visit_node(node, data: bytes, language: str, found: list[RawSite]) -> None:
+    if language == "typescript" and _in_type(node):
+        return
     if node.child_count == 0:
         _visit_leaf(node, data, language, found)
     else:

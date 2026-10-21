@@ -921,3 +921,12 @@ def test_snapshots_keep_other_files_empty_directories_and_odd_records(tmp_path):
     assert not (base / "empty").exists()
     assert (full / "keep.edn").is_file()
     _remove_empty_dirs(tmp_path / "missing-metrics")
+
+
+def test_scan_counts_a_site_inside_a_covered_multi_line_statement(tmp_path):
+    path = tmp_path / "src" / "demo.py"
+    path.parent.mkdir()
+    path.write_text("def add(a, b):\n    return (a\n            + b)\n", encoding="utf-8")
+    scanned = scan_file(path, tmp_path, covered_lines={2}, ignore_coverage=False, lines=None)
+    assert "uncovered" not in scanned
+    assert "+ -> -" in scanned

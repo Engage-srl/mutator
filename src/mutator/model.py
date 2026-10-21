@@ -20,6 +20,8 @@ class Site:
     mutant: str
     category: str
     mutation_id: str
+    # The line its statement starts on; coverage on that line counts for the site.
+    anchor_line: int = 0
 
     @property
     def description(self) -> str:
