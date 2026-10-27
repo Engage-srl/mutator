@@ -214,7 +214,7 @@ def covered_lines(root: Path, source_path: Path, language: str) -> set[int] | No
 
     crapper = ensure_crapper()
     path = source_path.resolve().as_posix()
-    if language == "java":
+    if language in {"java", "kotlin"}:
         return _lookup(_jacoco_index(root), path)
     bundle = crapper.coverage.load_bundle(root)
     if language == "go":

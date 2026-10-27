@@ -225,6 +225,7 @@ def _python_plan(root: Path, source: Path) -> tuple[Command, Path]:
 _PLANS = {
     "clojure": _clojure_plan,
     "java": _java_plan,
+    "kotlin": _java_plan,
     "go": _go_plan,
     "typescript": _typescript_plan,
     "rust": _rust_plan,
