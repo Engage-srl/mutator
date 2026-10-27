@@ -3,7 +3,8 @@
 Clojure follows clj-mutate's symbol rules. Go follows mutate4go, including
 one-way `*` to `/`. Java follows mutate4java. Kotlin, TypeScript, Rust, and
 Python use the same decisions as Java, spelled in that language. Kotlin
-leaves null safety (`?.`, `?:`, `!!`), `%`, ranges, `in`, and `is` alone. TypeScript also
+leaves null safety (`?.`, `?:`, `!!`), `%`, ranges, `in`, and `is` alone.
+Dart leaves null safety (`?.`, `??`, `x!`), `%`, `~/`, `is`, and `as` alone. TypeScript also
 mutates `??` to `||` and `?.` to `.` (removed on a call or index). JavaScript
 files use the TypeScript rules.
 """
@@ -43,9 +44,21 @@ _BINARY_PARENTS = {
     "equality_expression",
     "conjunction_expression",
     "disjunction_expression",
+    # Dart wraps some operator tokens in their own node.
+    "multiplicative_operator",
+    "relational_operator",
+    "logical_and_operator",
+    "logical_or_operator",
 }
 
-_UNARY_PARENTS = {"unary_expression", "unary_operator", "not_operator", "prefix_expression"}
+_UNARY_PARENTS = {
+    "unary_expression",
+    "unary_operator",
+    "not_operator",
+    "prefix_expression",
+    "negation_operator",
+    "prefix_operator",
+}
 
 _BOOLEANS = {"true": "false", "false": "true", "True": "False", "False": "True"}
 
@@ -225,6 +238,54 @@ _KOTLIN_SKIPPED = {
 }
 
 
+# Dart types, annotations, and type tests never run. Code inside `${}` does.
+_DART_SKIPPED = {"type_arguments", "annotation", "type_test", "type_cast"}
+
+
+def _has_operator(expression, token: bytes, following: str | None = None) -> bool:
+    for child in expression.children:
+        if child.type != "relational_operator" or child.text != token:
+            continue
+        after = child.next_sibling
+        if following is None or (after is not None and after.type == following):
+            return True
+    return False
+
+
+def _misread_generic(expression) -> bool:
+    """tree-sitter reads `Future<void>.delayed(d)` as `Future < void > .delayed(d)`:
+    a `<` on the left, then `>` followed by `.name`."""
+
+    if expression is None or expression.type != "relational_expression":
+        return False
+    left = expression.children[0]
+    if left.type != "relational_expression" or not _has_operator(left, b"<"):
+        return False
+    return _has_operator(expression, b">", "dot_shorthand")
+
+
+def _generic_type(node) -> bool:
+    operator = node.parent
+    if operator is None or operator.type != "relational_operator":
+        return False
+    return _misread_generic(operator.parent) or _misread_generic(operator.parent.parent)
+
+
+def _dart_skipped(node) -> bool:
+    if _generic_type(node):
+        return True
+    current = node.parent
+    while current is not None:
+        if current.type in _DART_SKIPPED:
+            return True
+        if current.type == "template_substitution":
+            return False
+        if current.type == "string_literal":
+            return True
+        current = current.parent
+    return False
+
+
 def _inside_any(node, types: set[str]) -> bool:
     current = node.parent
     while current is not None:
@@ -243,6 +304,8 @@ def _skipped(node, language: str) -> bool:
         return _in_type(node)
     if language == "kotlin":
         return node.type == "string_content" or _inside_any(node, _KOTLIN_SKIPPED)
+    if language == "dart":
+        return _dart_skipped(node)
     return False
 
 
