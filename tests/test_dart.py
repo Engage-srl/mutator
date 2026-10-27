@@ -206,3 +206,58 @@ def test_dart_generic_constructor_calls_are_not_comparisons():
     assert pairs.count(("<", "<=")) == 1
     assert (">", ">=") not in pairs
     assert ("+", "-") in pairs
+
+
+def test_dart_comparisons_next_to_dot_shorthands_are_sites():
+    source = """Color f(int a, int b) => a > b ? .red : .blue;
+bool g(int a, int b) => [a < b, .x].isEmpty;
+"""
+    pairs = _pairs(source)
+    assert (">", ">=") in pairs
+    assert ("<", "<=") in pairs
+
+
+BLOCKS = """int branch(int v) {
+  if (v > 100) {
+    v = v - 1;
+  }
+  return v;
+}
+
+int choose(bool a) {
+  var x = 0;
+  if (a) {
+    x = 1;
+  } else {
+    x = 2;
+  }
+  return x;
+}
+
+class C {
+  void never() {
+    print(1);
+  }
+  int field = 1 + 1;
+}
+
+int counter = 1;
+"""
+
+
+def test_dart_lines_do_not_borrow_from_closed_blocks_or_other_declarations(tmp_path):
+    from mutator.coverage import covered_lines
+
+    (tmp_path / "pubspec.yaml").write_text("name: demo\n", encoding="utf-8")
+    source = tmp_path / "lib" / "a.dart"
+    _lcov(source, BLOCKS)
+    _lcov(
+        tmp_path / "coverage" / "lcov.info",
+        "SF:lib/a.dart\nDA:1,1\nDA:3,0\nDA:8,1\nDA:11,1\nDA:19,0\nDA:20,0\nDA:22,1\nend_of_record\n",
+    )
+    lines = covered_lines(tmp_path, source, "dart")
+    assert 5 in lines  # `return v;` after a block that never ran
+    assert 15 in lines
+    assert 22 in lines  # the field initializer has its own record
+    assert 25 not in lines  # a top-level variable with no record
+    assert 3 not in lines

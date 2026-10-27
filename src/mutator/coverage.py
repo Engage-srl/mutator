@@ -209,18 +209,54 @@ def _go_lines(profile, source_path: str) -> set[int] | None:
     return covered
 
 
+def _dart_ranges(source: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Line spans of function bodies and of the blocks inside them."""
+
+    crapper = ensure_crapper()
+    _data, tree = crapper.languages.treesitter.parse(source, "dart")
+    bodies, blocks = [], []
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        span = (node.start_point[0] + 1, node.end_point[0] + 1)
+        if node.type == "function_body":
+            bodies.append(span)
+        elif node.type == "block":
+            blocks.append(span)
+        stack.extend(node.children)
+    return bodies, blocks
+
+
+def _borrowed_hit(line: int, records: dict[int, tuple[int, int]], bodies, blocks) -> bool:
+    """The closest record above `line` in its function body, skipping records
+    inside blocks that closed before `line`."""
+
+    body = next(((start, end) for start, end in bodies if start <= line <= end), None)
+    if body is None:
+        return False
+    closed = [(start, end) for start, end in blocks if end < line]
+    for number in range(line - 1, body[0] - 1, -1):
+        if number in records and not any(start < number <= end for start, end in closed):
+            return records[number][0] > 0
+    return False
+
+
 def _dart_lines(lines: dict[int, tuple[int, int]] | None, source_path: Path) -> set[int] | None:
     """The Dart VM marks a function's first line and its calls, not `return 1;`.
-    A line with no record takes the hit of the last record above it."""
+    A line with no record borrows the hit of the closest record above it in the
+    same function, never one from a block that already closed. An `else` block
+    with no record of its own borrows its `if` line."""
 
     if lines is None:
         return None
-    count = len(source_path.read_text(encoding="utf-8", errors="replace").splitlines())
+    source = source_path.read_text(encoding="utf-8", errors="replace")
+    bodies, blocks = _dart_ranges(source)
     covered: set[int] = set()
-    hit = False
-    for number in range(1, count + 1):
+    for number in range(1, len(source.splitlines()) + 1):
         if number in lines:
             hit = lines[number][0] > 0
+        else:
+            hit = _borrowed_hit(number, lines, bodies, blocks)
         if hit:
             covered.add(number)
     return covered
