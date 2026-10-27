@@ -1,8 +1,9 @@
 """Find mutation sites.
 
 Clojure follows clj-mutate's symbol rules. Go follows mutate4go, including
-one-way `*` to `/`. Java follows mutate4java. TypeScript, Rust, and Python
-use the same decisions as Java, spelled in that language. TypeScript also
+one-way `*` to `/`. Java follows mutate4java. Kotlin, TypeScript, Rust, and
+Python use the same decisions as Java, spelled in that language. Kotlin
+leaves null safety (`?.`, `?:`, `!!`), `%`, ranges, `in`, and `is` alone. TypeScript also
 mutates `??` to `||` and `?.` to `.` (removed on a call or index). JavaScript
 files use the TypeScript rules.
 """
@@ -36,9 +37,15 @@ _BINARY_PARENTS = {
     "binary_operator",
     "comparison_operator",
     "boolean_operator",
+    "additive_expression",
+    "multiplicative_expression",
+    "comparison_expression",
+    "equality_expression",
+    "conjunction_expression",
+    "disjunction_expression",
 }
 
-_UNARY_PARENTS = {"unary_expression", "unary_operator", "not_operator"}
+_UNARY_PARENTS = {"unary_expression", "unary_operator", "not_operator", "prefix_expression"}
 
 _BOOLEANS = {"true": "false", "false": "true", "True": "False", "False": "True"}
 
@@ -174,14 +181,17 @@ def _add(found: list[RawSite], node, original: str, mutant: str, category: str) 
     )
 
 
-def _is_statement(node_type: str) -> bool:
-    return node_type.endswith("_statement") or node_type.endswith("_declaration")
+def _is_statement(node) -> bool:
+    # Kotlin has no `_statement` nodes for expressions: a statement is a child of `statements`.
+    if node.parent is not None and node.parent.type == "statements":
+        return True
+    return node.type.endswith("_statement") or node.type.endswith("_declaration")
 
 
 def _statement_line(node) -> int:
     current = node.parent
     while current is not None:
-        if _is_statement(current.type):
+        if _is_statement(current):
             return current.start_point[0] + 1
         current = current.parent
     return node.start_point[0] + 1
@@ -198,12 +208,35 @@ _TYPE_NODES = {
 }
 
 
-def _in_type(node) -> bool:
+# Kotlin types and annotations never run. Code inside `${}` in a string does.
+_KOTLIN_SKIPPED = {
+    "user_type",
+    "nullable_type",
+    "type_arguments",
+    "annotation",
+    "file_annotation",
+    "string_content",
+}
+
+
+def _inside_any(node, types: set[str]) -> bool:
     current = node.parent
     while current is not None:
-        if current.type in _TYPE_NODES:
+        if current.type in types:
             return True
         current = current.parent
+    return False
+
+
+def _in_type(node) -> bool:
+    return _inside_any(node, _TYPE_NODES)
+
+
+def _skipped(node, language: str) -> bool:
+    if language == "typescript":
+        return _in_type(node)
+    if language == "kotlin":
+        return node.type == "string_content" or _inside_any(node, _KOTLIN_SKIPPED)
     return False
 
 
@@ -337,7 +370,7 @@ def _visit_leaf(node, data: bytes, language: str, found: list[RawSite]) -> None:
 
 
 def _visit_node(node, data: bytes, language: str, found: list[RawSite]) -> None:
-    if language == "typescript" and _in_type(node):
+    if _skipped(node, language):
         return
     if node.child_count == 0:
         _visit_leaf(node, data, language, found)
