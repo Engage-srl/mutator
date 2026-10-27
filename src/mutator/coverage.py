@@ -209,6 +209,23 @@ def _go_lines(profile, source_path: str) -> set[int] | None:
     return covered
 
 
+def _dart_lines(lines: dict[int, tuple[int, int]] | None, source_path: Path) -> set[int] | None:
+    """The Dart VM marks a function's first line and its calls, not `return 1;`.
+    A line with no record takes the hit of the last record above it."""
+
+    if lines is None:
+        return None
+    count = len(source_path.read_text(encoding="utf-8", errors="replace").splitlines())
+    covered: set[int] = set()
+    hit = False
+    for number in range(1, count + 1):
+        if number in lines:
+            hit = lines[number][0] > 0
+        if hit:
+            covered.add(number)
+    return covered
+
+
 def covered_lines(root: Path, source_path: Path, language: str) -> set[int] | None:
     """Lines with a hit, or None when this file is absent from coverage."""
 
@@ -219,6 +236,8 @@ def covered_lines(root: Path, source_path: Path, language: str) -> set[int] | No
     bundle = crapper.coverage.load_bundle(root)
     if language == "go":
         return _go_lines(bundle.go_profile, path)
+    if language == "dart":
+        return _dart_lines(_lookup(bundle.lcov, path), source_path)
     if language == "clojure":
         html = _covered_from_pairs(_lookup(bundle.form_html, path))
         if html is not None:
