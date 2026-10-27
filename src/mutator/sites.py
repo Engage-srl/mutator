@@ -181,8 +181,14 @@ def _add(found: list[RawSite], node, original: str, mutant: str, category: str) 
     )
 
 
+# Kotlin has no `_statement` nodes for expressions: a statement is a child of
+# `statements`, and a branch of `if` or `when` is covered line by line.
+_KOTLIN_STATEMENTS = {"when_entry", "control_structure_body"}
+
+
 def _is_statement(node) -> bool:
-    # Kotlin has no `_statement` nodes for expressions: a statement is a child of `statements`.
+    if node.type in _KOTLIN_STATEMENTS:
+        return True
     if node.parent is not None and node.parent.type == "statements":
         return True
     return node.type.endswith("_statement") or node.type.endswith("_declaration")

@@ -123,6 +123,8 @@ mutator --use-existing-coverage --test-command "mvn -q -pl <module> -am test" <m
 
 Every mutant recompiles the module and reruns its tests, so a run over a whole project is slow.
 
+Known bias: Kotlin smart casts. In `if (x != null && x.length > 0)`, flipping `!=` or `&&` stops `x.length` from compiling, and that mutant counts as killed although no test caught it. The same happens to `+` on a `String`, as in Java. Read a high kill rate on null-checking code with that in mind.
+
 Coverage is generated with crapper's commands unless `--use-existing-coverage` or `--no-coverage` is set. A file missing from the report is treated as uncovered, and the run says so.
 
 ## Development

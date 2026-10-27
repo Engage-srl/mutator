@@ -158,3 +158,50 @@ def test_help_mentions_kotlin():
     from mutator.cli import HELP
 
     assert "Kotlin" in HELP
+
+
+def test_kotlin_branch_anchors_stay_on_the_branch():
+    source = """fun f(x: Int) =
+    if (x > 0)
+        1
+    else
+        0
+
+fun g(x: Int): Int {
+    return when {
+        x > 0 -> 1
+        else -> 0
+    }
+}
+"""
+    anchors = {
+        (site.original, site.line): site.anchor_line
+        for site in discover_raw(source, "kotlin", "A.kt")
+        if site.original in {"0", "1"}
+    }
+    assert anchors[("0", 5)] == 5
+    assert anchors[("1", 9)] == 9
+    assert anchors[("0", 10)] == 10
+
+
+def test_kotlin_coverage_follows_the_package_not_the_directory(tmp_path):
+    from mutator.coverage import covered_lines
+
+    report = tmp_path / "target" / "site" / "jacoco" / "jacoco.xml"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        """<?xml version="1.0"?>
+<report name="demo">
+  <package name="com/acme/util">
+    <sourcefile name="Strings.kt">
+      <line nr="3" mi="0" ci="2" mb="0" cb="0"/>
+    </sourcefile>
+  </package>
+</report>
+""",
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "main" / "kotlin" / "util" / "Strings.kt"
+    source.parent.mkdir(parents=True)
+    source.write_text("package com.acme.util\n\nfun a() = 1\n", encoding="utf-8")
+    assert covered_lines(tmp_path, source, "kotlin") == {3}

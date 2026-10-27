@@ -7,6 +7,7 @@ A file that does not appear in a report has no coverage data.
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -194,6 +195,24 @@ def _jacoco_index(root: Path) -> dict[str, set[int]]:
     return found
 
 
+_KOTLIN_PACKAGE = re.compile(r"^\s*package\s+([\w.]+)", re.MULTILINE)
+
+
+def _kotlin_lines(index: dict[str, set[int]], source_path: Path) -> set[int] | None:
+    """JaCoCo keys a Kotlin file by its package, which need not match its directory."""
+
+    try:
+        text = source_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    package = _KOTLIN_PACKAGE.search(text)
+    if package is not None:
+        key = f"{package.group(1).replace('.', '/')}/{source_path.name}"
+        if key in index:
+            return index[key]
+    return _lookup(index, source_path.resolve().as_posix())
+
+
 def _go_lines(profile, source_path: str) -> set[int] | None:
     if not profile:
         return None
@@ -214,7 +233,9 @@ def covered_lines(root: Path, source_path: Path, language: str) -> set[int] | No
 
     crapper = ensure_crapper()
     path = source_path.resolve().as_posix()
-    if language in {"java", "kotlin"}:
+    if language == "kotlin":
+        return _kotlin_lines(_jacoco_index(root), source_path)
+    if language == "java":
         return _lookup(_jacoco_index(root), path)
     bundle = crapper.coverage.load_bundle(root)
     if language == "go":
