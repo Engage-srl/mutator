@@ -221,7 +221,23 @@ _TYPE_NODES = {
 _DART_SKIPPED = {"type_arguments", "annotation", "type_test", "type_cast"}
 
 
+def _generic_type(node) -> bool:
+    """tree-sitter reads `Future<void>.delayed(d)` as `Future < void > .delayed(d)`."""
+
+    operator = node.parent
+    if operator is None or operator.type != "relational_operator":
+        return False
+    for expression in (operator.parent, operator.parent.parent):
+        if expression is not None and any(
+            child.type == "dot_shorthand" for child in expression.children
+        ):
+            return True
+    return False
+
+
 def _dart_skipped(node) -> bool:
+    if _generic_type(node):
+        return True
     current = node.parent
     while current is not None:
         if current.type in _DART_SKIPPED:

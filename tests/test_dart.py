@@ -191,3 +191,18 @@ def test_help_mentions_dart():
     from mutator.cli import HELP
 
     assert "Dart" in HELP
+
+
+def test_dart_generic_constructor_calls_are_not_comparisons():
+    """tree-sitter reads `Future<void>.delayed(d)` as `Future < void > .delayed(d)`."""
+
+    source = """Future<void> f(int a) async {
+  await Future<void>.delayed(Duration(milliseconds: a + 1));
+  var l = List<int>.empty();
+  return a < 2 ? null : null;
+}
+"""
+    pairs = _pairs(source)
+    assert pairs.count(("<", "<=")) == 1
+    assert (">", ">=") not in pairs
+    assert ("+", "-") in pairs
