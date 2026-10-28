@@ -1,9 +1,8 @@
 """Find mutation sites.
 
 Clojure follows clj-mutate's symbol rules. Go follows mutate4go, including
-one-way `*` to `/`. Java follows mutate4java. Kotlin, TypeScript, Rust, and
-Python use the same decisions as Java, spelled in that language. Kotlin
-leaves null safety (`?.`, `?:`, `!!`), `%`, ranges, `in`, and `is` alone.
+one-way `*` to `/`. Java follows mutate4java. TypeScript, Rust, Python, and
+Dart use the same decisions as Java, spelled in that language.
 Dart leaves null safety (`?.`, `??`, `x!`), `%`, `~/`, `is`, and `as` alone. TypeScript also
 mutates `??` to `||` and `?.` to `.` (removed on a call or index). JavaScript
 files use the TypeScript rules.
@@ -38,12 +37,12 @@ _BINARY_PARENTS = {
     "binary_operator",
     "comparison_operator",
     "boolean_operator",
-    "additive_expression",
-    "multiplicative_expression",
     "comparison_expression",
     "equality_expression",
     "conjunction_expression",
     "disjunction_expression",
+    "additive_expression",
+    "multiplicative_expression",
     # Dart wraps some operator tokens in their own node.
     "multiplicative_operator",
     "relational_operator",
@@ -59,6 +58,11 @@ _UNARY_PARENTS = {
     "negation_operator",
     "prefix_operator",
 }
+
+_SKIPPED_SUBTREES = {"ERROR", "annotation", "file_annotation"}
+
+_KOTLIN_RANGES = {"..": "..<", "..<": ".."}
+_LEGACY_RANGES = {"..": "until"}
 
 _BOOLEANS = {"true": "false", "false": "true", "True": "False", "False": "True"}
 
@@ -178,14 +182,16 @@ def _optional_mutant(node) -> str | None:
     return None
 
 
-def _add(found: list[RawSite], node, original: str, mutant: str, category: str) -> None:
+def _add(
+    found: list[RawSite], node, original: str, mutant: str, category: str, start: int = -1, end: int = -1
+) -> None:
     if mutant == original:
         return
     found.append(
         RawSite(
             line=node.start_point[0] + 1,
-            start=node.start_byte,
-            end=node.end_byte,
+            start=node.start_byte if start < 0 else start,
+            end=node.end_byte if end < 0 else end,
             original=original,
             mutant=mutant,
             category=category,
@@ -194,17 +200,13 @@ def _add(found: list[RawSite], node, original: str, mutant: str, category: str) 
     )
 
 
-# Kotlin has no `_statement` nodes for expressions: a statement is a child of
-# `statements`, and a branch of `if` or `when` is covered line by line.
-_KOTLIN_STATEMENTS = {"when_entry", "control_structure_body"}
+_KOTLIN_STATEMENT_PARENTS = {"statements", "control_structure_body", "function_body"}
 
 
 def _is_statement(node) -> bool:
-    if node.type in _KOTLIN_STATEMENTS:
+    if node.type.endswith("_statement") or node.type.endswith("_declaration"):
         return True
-    if node.parent is not None and node.parent.type == "statements":
-        return True
-    return node.type.endswith("_statement") or node.type.endswith("_declaration")
+    return node.type == "when_entry" or _parent_type(node) in _KOTLIN_STATEMENT_PARENTS
 
 
 def _statement_line(node) -> int:
@@ -224,17 +226,6 @@ _TYPE_NODES = {
     "type_arguments",
     "type_parameters",
     "literal_type",
-}
-
-
-# Kotlin types and annotations never run. Code inside `${}` in a string does.
-_KOTLIN_SKIPPED = {
-    "user_type",
-    "nullable_type",
-    "type_arguments",
-    "annotation",
-    "file_annotation",
-    "string_content",
 }
 
 
@@ -286,27 +277,19 @@ def _dart_skipped(node) -> bool:
     return False
 
 
-def _inside_any(node, types: set[str]) -> bool:
+def _in_type(node) -> bool:
     current = node.parent
     while current is not None:
-        if current.type in types:
+        if current.type in _TYPE_NODES:
             return True
         current = current.parent
     return False
 
 
-def _in_type(node) -> bool:
-    return _inside_any(node, _TYPE_NODES)
-
-
 def _skipped(node, language: str) -> bool:
     if language == "typescript":
         return _in_type(node)
-    if language == "kotlin":
-        return node.type == "string_content" or _inside_any(node, _KOTLIN_SKIPPED)
-    if language == "dart":
-        return _dart_skipped(node)
-    return False
+    return language == "dart" and _dart_skipped(node)
 
 
 def _clojure_head(node, data: bytes) -> str | None:
@@ -397,6 +380,43 @@ def _visit_optional(node, token: str, language: str, found: list[RawSite]) -> No
         _add(found, node, "?.", optional, "optional")
 
 
+def _visit_check(node, token: str, parent: str, found: list[RawSite]) -> None:
+    if parent != "check_expression":
+        return
+    if token == "!":
+        _add(found, node, token, "", "check")
+        return
+    previous = node.prev_sibling
+    if token in {"is", "in"} and (previous is None or previous.type != "!"):
+        _add(found, node, token, "!" + token, "check")
+
+
+def _visit_range(node, token: str, parent: str, found: list[RawSite], legacy: bool) -> None:
+    ranges = _LEGACY_RANGES if legacy else _KOTLIN_RANGES
+    if parent == "range_expression" and token in ranges:
+        _add(found, node, token, ranges[token], "range")
+        return
+    if token == "until" and parent == "infix_expression" and node.parent.child(1).id == node.id:
+        _add(found, node, token, "..", "range")
+
+
+def _visit_elvis(node, token: str, parent: str, found: list[RawSite]) -> None:
+    if token != "?:" or parent != "elvis_expression" or node.prev_sibling is None:
+        return
+    elvis = node.parent
+    start = node.prev_sibling.end_byte
+    original = elvis.text[start - elvis.start_byte :].decode("utf-8")
+    _add(found, node, original, "!!", "elvis", start=start, end=elvis.end_byte)
+
+
+def _visit_kotlin(node, token: str, parent: str, language: str, found: list[RawSite]) -> None:
+    if language not in {"kotlin", "kotlin-legacy"}:
+        return
+    _visit_check(node, token, parent, found)
+    _visit_range(node, token, parent, found, language == "kotlin-legacy")
+    _visit_elvis(node, token, parent, found)
+
+
 def _visit_not(node, token: str, parent: str, found: list[RawSite]) -> None:
     if token in {"!", "not"} and parent in _UNARY_PARENTS | {"comparison_operator"}:
         _add(found, node, token, "", "unary")
@@ -432,6 +452,7 @@ def _visit_leaf(node, data: bytes, language: str, found: list[RawSite]) -> None:
     parent = _parent_type(node)
     _visit_binary(node, token, parent, language, found)
     _visit_optional(node, token, language, found)
+    _visit_kotlin(node, token, parent, language, found)
     _visit_not(node, token, parent, found)
     _visit_negation(node, token, parent, found)
     _visit_boolean_token(node, token, found)
@@ -452,11 +473,13 @@ def _visit(node, data: bytes, language: str, found: list[RawSite]) -> None:
     stack = [node]
     while stack:
         current = stack.pop()
+        if current.type in _SKIPPED_SUBTREES:
+            continue
         _visit_node(current, data, language, found)
         stack.extend(reversed(current.children))
 
 
-def discover_raw(source: str, language: str, path: str) -> list[RawSite]:
+def discover_raw(source: str, language: str, path: str, legacy_ranges: bool = False) -> list[RawSite]:
     """Mutation sites in source order. Offsets are UTF-8 byte offsets."""
 
     crapper = ensure_crapper()
@@ -467,7 +490,8 @@ def discover_raw(source: str, language: str, path: str) -> list[RawSite]:
     if language == "clojure":
         _visit_clojure(tree.root_node, data, found)
     else:
-        _visit(tree.root_node, data, language, found)
+        visited = "kotlin-legacy" if language == "kotlin" and legacy_ranges else language
+        _visit(tree.root_node, data, visited, found)
     found.sort(key=lambda site: (site.line, site.start, site.end))
     return found
 

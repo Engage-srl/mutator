@@ -79,24 +79,24 @@ uml-viewer loads every `*.edn` file under `.metrics/mutate`. Each file is one na
 | --- | --- | --- |
 | Clojure | the `ns` | the `defn` / `defn-` name |
 | Java | `package.Class`, or `package.Outer.Inner` | the method name |
-| Kotlin | `package.Class`, `package.Outer.Inner`, or `package.FileKt` for top-level functions | the function name, or `getX` / `setX` for a custom accessor |
+| Kotlin | `package.Class`, `package.Outer.Inner`, or `package.Class.Companion`; `package.FileNameKt` (or the `@file:JvmName`) for a top-level function | the function name |
 | Go | the package import path, or `import/path.Receiver` | the function or method name |
 | TypeScript | the dotted module path, or `module.Class` | the function or method name |
 | Rust | `crate::module`, or `crate::module::Type` | the function or method name |
 | Python | the dotted module path, or `module.Class` | the function or method name |
 | Dart | the package name plus the path under `lib/`, or `module.Type` | the function or method name; `size` / `size=` for a getter / setter, `operator +`, a factory's name |
 
-`defn-` is Clojure's private form. Elsewhere a private method or Kotlin `private` function, an unexported Go function, a Python or Dart name that starts with `_`, a Rust function that is not `pub`, or a TypeScript `private` / `#` name uses `defn-/`.
+`defn-` is Clojure's private form. Elsewhere a private Java method, a `private` or `internal` Kotlin function, an unexported Go function, a Python or Dart name that starts with `_`, a Rust function that is not `pub`, or a TypeScript `private` / `#` name uses `defn-/`.
 
 ## What each language mutates
 
-Tokens inside strings, comments, and quoted Clojure forms are left alone. A replacement that does not compile fails the test run and counts as killed.
+Tokens inside strings, comments, quoted Clojure forms, Java and Kotlin annotations, and code the grammar cannot parse are left alone. A replacement that does not compile fails the test run and counts as killed.
 
 | Language | Mutations |
 | --- | --- |
 | Clojure | clj-mutate's head symbols: `+`/`-`, `*` to `/`, `inc`/`dec`, comparisons, `=`/`not=`, `if`/`if-not`, `when`/`when-not`, `and`/`or`, and the seq, predicate, and coercion pairs. `true`/`false` and `0`/`1` anywhere. |
 | Java | `true`/`false`, `==`/`!=`, `<`/`<=`, `>`/`>=`, `+`/`-`, `*`/`/`, `&&`/`||`, delete `!` and unary `-`, `0`/`1`. Constructors are not entries, matching crapper. |
-| Kotlin | the Java set, plus `===`/`!==`. Null safety (`?.`, `?:`, `!!`), `%`, ranges (`..`), `in`, and `is` are left alone: removing a `?.` usually does not compile, and that would count as a kill the tests never earned. Types, annotations, and string text are skipped; code inside `${}` is mutated. |
+| Kotlin | the Java set, plus `===`/`!==`, `is`/`!is`, `in`/`!in`, `..`/`..<`, `until` to `..`, and `a ?: b` to `a!!`. A project whose build names a Kotlin version before 1.9 gets `..` to `until`, since it has no `..<`. `?.` and `!!` are left alone: removing either does not compile on a nullable value and changes nothing on a non-null one. |
 | Go | mutate4go: `+`/`-`, `*` to `/` only, comparisons, `==`/`!=`, `true`/`false`, `&&`/`||`, `0`/`1`. |
 | TypeScript | the Java set, plus `===`/`!==`, `??` to `||`, and `?.` to `.`. A call or index drops `?.` (`a?.()` becomes `a()`). `.js`, `.jsx`, `.mjs`, and `.cjs` use these rules. |
 | Rust | the Java set (`&&`/`||`, `!`, unary `-`). |
@@ -110,25 +110,16 @@ The baseline command has to pass before any mutant runs. A mutant's timeout is t
 | Language | Command | Where |
 | --- | --- | --- |
 | Clojure | `clj -M:spec --tag ~no-mutate` when Speclj is on the classpath, otherwise `clj -M:test` or `bb spec` | nearest `deps.edn` or `bb.edn` |
-| Java | `mvn -q test -DexcludeTags=no-mutate` | nearest `pom.xml` |
-| Kotlin | `mvn -q test -DexcludeTags=no-mutate` | nearest `pom.xml` |
+| Java, Kotlin | `mvn -q test -DexcludeTags=no-mutate`, or `gradlew test` (`gradle test` without a wrapper) when the nearest build file is `build.gradle` or `build.gradle.kts` | nearest `pom.xml` or Gradle build file; Maven wins when a module has both |
 | Go | `go test -count=1` of the file's package | nearest `go.mod` |
 | TypeScript | `npm test` | nearest `package.json` |
 | Rust | `cargo test` | nearest `Cargo.toml` |
 | Python | the project's `.venv` or `venv` Python running `pytest`, or `unittest discover` | nearest project file |
 | Dart | `flutter test` when `pubspec.yaml` depends on `sdk: flutter`, otherwise `dart test` | nearest `pubspec.yaml` |
 
-Kotlin uses JaCoCo line coverage, like Java. In a Maven multi-module project whose modules depend on each other, build coverage once with crapper, then run one file at a time against its module:
-
-```sh
-mutator --use-existing-coverage --test-command "mvn -q -pl <module> -am test" <module>/src/main/kotlin/.../File.kt
-```
-
-Every mutant recompiles the module and reruns its tests, so a run over a whole project is slow.
-
-Known bias: Kotlin smart casts. In `if (x != null && x.length > 0)`, flipping `!=` or `&&` stops `x.length` from compiling, and that mutant counts as killed although no test caught it. The same happens to `+` on a `String`, as in Java. Read a high kill rate on null-checking code with that in mind.
-
 Dart coverage is LCOV from `flutter test --coverage` or `dart test --coverage-path`, read the way crapper reads it, including each package's `coverage/lcov.info`. The Dart VM records a function's first line and its calls, not every statement: `return 1;` usually has no hit count. A line with no record takes the hit of the closest recorded line above it, so a mutant inside a function that ran is run. A branch that never ran in a function that did is run too and survives; read Dart survivors with that in mind. Each mutant reruns the package's tests, and a Flutter test run takes seconds even for a small package, so start with one file. `flutter` must be on `PATH`; when it is not, the baseline fails and no mutant runs.
+
+Gradle has no counterpart to `-DexcludeTags`. To skip `no-mutate` tests on Gradle, pass a `--test-command` your build understands.
 
 Coverage is generated with crapper's commands unless `--use-existing-coverage` or `--no-coverage` is set. A file missing from the report is treated as uncovered, and the run says so.
 
